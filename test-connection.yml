@@ -1,0 +1,32 @@
+---
+- name: Test server connection
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Ping test
+      ping:
+
+    - name: Check uptime
+      command: uptime
+      register: uptime_result
+
+    - name: Display uptime
+      debug:
+        msg: "Server uptime: {{ uptime_result.stdout }}"
+
+    - name: Check disk space
+      command: df -h
+      register: disk_space
+
+    - name: Display disk space
+      debug:
+        msg: "{{ disk_space.stdout_lines }}"
+
+    - name: Test sudo access
+      command: whoami
+      become: yes
+      register: sudo_test
+
+    - name: Display sudo test result
+      debug:
+        msg: "Sudo access works: {{ sudo_test.stdout }}"

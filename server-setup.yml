@@ -1,0 +1,265 @@
+---
+- name: Server Setup Playbook
+  hosts: all
+  become: yes
+  vars:
+    new_ssh_port: NEW_SSH_PORT
+    new_user: "USER_NAME"
+    ssh_key_password: "SSH_KEY_PASSWORD"
+    docker_hub_username: "DOCKER_HUB_USERNAME"
+    docker_hub_password: "DOCKER_HUB_PASSWORD"
+
+  tasks:
+    # 1. Изменение порта SSH
+    - name: Change SSH port
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?Port"
+        line: "Port {{ new_ssh_port }}"
+        backup: yes
+      notify: restart ssh
+
+    - name: Disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      notify: restart ssh
+
+    # 2. Установка UFW
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+        update_cache: yes
+
+    - name: Configure UFW defaults
+      ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: "incoming", policy: "deny" }
+        - { direction: "outgoing", policy: "allow" }
+
+    - name: Allow new SSH port
+      ufw:
+        rule: allow
+        port: "{{ new_ssh_port }}"
+        proto: tcp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    # 3. Создание пользователя с правами root
+    - name: Create new user
+      user:
+        name: "{{ new_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: yes
+        create_home: yes
+
+    - name: Generate SSH key for new user
+      user:
+        name: "{{ new_user }}"
+        generate_ssh_key: yes
+        ssh_key_bits: 4096
+        ssh_key_file: .ssh/id_rsa
+        ssh_key_passphrase: "{{ ssh_key_password }}"
+
+    - name: Set up sudo without password for new user
+      lineinfile:
+        path: /etc/sudoers.d/{{ new_user }}
+        line: "{{ new_user }} ALL=(ALL) NOPASSWD:ALL"
+        create: yes
+        validate: "visudo -cf %s"
+
+    - name: Create .ssh directory for new user
+      file:
+        path: /home/{{ new_user }}/.ssh
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: "0700"
+
+    - name: Copy authorized_keys for new user
+      copy:
+        src: /root/.ssh/authorized_keys
+        dest: /home/{{ new_user }}/.ssh/authorized_keys
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: "0600"
+        remote_src: yes
+      ignore_errors: yes
+
+    - name: Create ansible directories with correct permissions
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: "0755"
+      loop:
+        - /home/{{ new_user }}/.ansible
+        - /home/{{ new_user }}/.ansible/tmp
+      become: yes
+
+    - name: Set ansible remote_tmp for user
+      lineinfile:
+        path: /home/{{ new_user }}/.bashrc
+        line: "export ANSIBLE_REMOTE_TMP=/home/{{ new_user }}/.ansible/tmp"
+        create: yes
+      become: yes
+
+    # 4. Установка Docker
+    - name: Install required packages for Docker
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: Add Docker GPG key (Debian)
+      apt_key:
+        url: https://download.docker.com/linux/debian/gpg
+        state: present
+      when: ansible_distribution == "Debian"
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ new_user }}"
+        groups: docker
+        append: yes
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Login to Docker Hub with token
+      community.docker.docker_login:
+        username: "{{ docker_hub_username }}"
+        password: "{{ docker_hub_password }}"
+      become_user: "{{ new_user }}"
+      when: docker_hub_username is defined and docker_hub_password is defined
+
+    # 5. Установка Nginx Proxy Manager
+    - name: Create nginx-proxy-manager directory
+      file:
+        path: /opt/nginx-proxy-manager
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+
+    - name: Create docker-compose.yml for Nginx Proxy Manager
+      copy:
+        dest: /opt/nginx-proxy-manager/docker-compose.yml
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        content: |
+          services:
+            app:
+              image: 'jc21/nginx-proxy-manager:latest'
+              restart: unless-stopped
+              ports:
+                - '80:80'
+                - '81:81'
+                - '443:443'
+              volumes:
+                - ./data:/data
+                - ./letsencrypt:/etc/letsencrypt
+
+    - name: Allow HTTP traffic
+      ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
+
+    - name: Allow HTTPS traffic
+      ufw:
+        rule: allow
+        port: "443"
+        proto: tcp
+
+    - name: Allow Nginx Proxy Manager admin interface
+      ufw:
+        rule: allow
+        port: "81"
+        proto: tcp
+
+    - name: Start Nginx Proxy Manager
+      community.docker.docker_compose_v2:
+        project_src: /opt/nginx-proxy-manager
+        state: present
+      become_user: "{{ new_user }}"
+
+    # 6. Установка Portainer
+    - name: Create portainer directory
+      file:
+        path: /opt/portainer
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+
+    - name: Create docker-compose.yml for Portainer
+      copy:
+        dest: /opt/portainer/docker-compose.yml
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        content: |
+          services:
+            portainer:
+              image: portainer/portainer-ce:latest
+              restart: unless-stopped
+              ports:
+                - '9000:9000'
+                - '9443:9443'
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - portainer_data:/data
+          volumes:
+            portainer_data:
+
+    - name: Allow Portainer HTTP
+      ufw:
+        rule: allow
+        port: "9000"
+        proto: tcp
+
+    - name: Allow Portainer HTTPS
+      ufw:
+        rule: allow
+        port: "9443"
+        proto: tcp
+
+    - name: Start Portainer
+      community.docker.docker_compose_v2:
+        project_src: /opt/portainer
+        state: present
+      become_user: "{{ new_user }}"
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: ssh
+        state: restarted
