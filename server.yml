@@ -1,0 +1,17 @@
+- hosts: all
+  become: yes
+  vars:
+    self_steal_domain: "hDtScFz4xe.vpn.wowblvck.ru"
+    self_steal_port: "9443"
+    agent_secret: "AbbXz9DdiEUCIElV5Sr9b7HfplGO26aO"
+    new_user: "wowblvck"
+    remnanode_version: "2.1.1"
+  roles:
+    # - user
+    # - ufw
+    # - docker
+    # - portainer-agent
+    # - remnanode
+    # - caddy
+    - fail2ban
+    - ssh-setup

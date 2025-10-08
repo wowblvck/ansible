@@ -1,0 +1,29 @@
+- name: Create new user
+  user:
+    name: "{{ new_user }}"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+    create_home: yes
+    password: "!"
+    state: present
+
+- name: Set up sudo without password for new user
+  lineinfile:
+    path: /etc/sudoers.d/{{ new_user }}
+    line: "{{ new_user }} ALL=(ALL) NOPASSWD:ALL"
+    create: yes
+    mode: "0440"
+
+- name: Create .ssh directory for new user
+  file:
+    path: /home/{{ new_user }}/.ssh
+    state: directory
+    owner: "{{ new_user }}"
+    group: "{{ new_user }}"
+    mode: "0700"
+
+- name: Ensure user can login without password initially
+  user:
+    name: "{{ new_user }}"
+    password_lock: no

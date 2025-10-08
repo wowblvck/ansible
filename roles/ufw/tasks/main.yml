@@ -1,0 +1,35 @@
+- name: Install UFW
+  apt:
+    name: ufw
+    state: present
+    update_cache: yes
+
+- name: Configure UFW defaults
+  ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: "incoming", policy: "deny" }
+    - { direction: "outgoing", policy: "allow" }
+  notify: enable ufw
+
+- name: Allow new SSH port
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+  notify: enable ufw
+
+- name: Allow HTTP traffic
+  ufw:
+    rule: allow
+    port: "80"
+    proto: tcp
+  notify: enable ufw
+
+- name: Allow HTTPS traffic
+  ufw:
+    rule: allow
+    port: "443"
+    proto: tcp
+  notify: enable ufw

@@ -1,0 +1,113 @@
+---
+- name: Generate SSH key pair locally
+  openssh_keypair:
+    path: "~/.ssh/{{ ansible_host }}_{{ new_user }}"
+    type: rsa
+    size: 4096
+    comment: "{{ new_user }}@{{ ansible_host }}"
+  delegate_to: localhost
+  become: no
+  run_once: true
+
+- name: Display SSH key location
+  debug:
+    msg: "SSH ключ создан: ~/.ssh/{{ ansible_host }}_{{ new_user }}"
+
+- name: Ensure .ssh directory exists for new user
+  file:
+    path: "/home/{{ new_user }}/.ssh"
+    state: directory
+    owner: "{{ new_user }}"
+    group: "{{ new_user }}"
+    mode: "0700"
+
+- name: Copy public key to authorized_keys
+  copy:
+    src: "~/.ssh/{{ ansible_host }}_{{ new_user }}.pub"
+    dest: "/home/{{ new_user }}/.ssh/authorized_keys"
+    owner: "{{ new_user }}"
+    group: "{{ new_user }}"
+    mode: "0600"
+
+- name: Generate random SSH port
+  set_fact:
+    new_ssh_port: "{{ 2222 + (65535 - 2222) | random }}"
+
+- name: Display generated SSH port
+  debug:
+    msg: "Новый SSH порт: {{ new_ssh_port }}"
+
+- name: Allow new SSH port through UFW
+  ufw:
+    rule: allow
+    port: "{{ new_ssh_port }}"
+    proto: tcp
+
+- name: Update SSH port in sshd_config
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port\s+'
+    line: "Port {{ new_ssh_port }}"
+    backup: yes
+  notify: restart sshd
+
+- name: Restart SSH service
+  systemd:
+    name: sshd
+    state: restarted
+
+- name: Test SSH connection with new key
+  command: ssh -i ~/.ssh/{{ ansible_host }}_{{ new_user }} -p {{ new_ssh_port }} -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o PasswordAuthentication=no -o PubkeyAuthentication=yes {{ new_user }}@{{ ansible_host }} "echo 'SSH connection successful'"
+  delegate_to: localhost
+  become: no
+  register: ssh_test_result
+  changed_when: false
+
+- name: Display SSH test result
+  debug:
+    msg: "Тест SSH подключения: {{ ssh_test_result.stdout }}"
+
+- name: Disable root login via SSH
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin\s+'
+    line: "PermitRootLogin no"
+    backup: yes
+  notify: restart sshd
+
+- name: Disable password authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication\s+'
+    line: "PasswordAuthentication no"
+    backup: yes
+  notify: restart sshd
+
+- name: Disable challenge response authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?ChallengeResponseAuthentication\s+'
+    line: "ChallengeResponseAuthentication no"
+    backup: yes
+  notify: restart sshd
+
+- name: Disable PAM authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?UsePAM\s+'
+    line: "UsePAM no"
+    backup: yes
+  notify: restart sshd
+
+- name: Final SSH service restart
+  systemd:
+    name: sshd
+    state: restarted
+
+- name: Display final connection info
+  debug:
+    msg: |
+      SSH настройка завершена!
+      Новый порт: {{ new_ssh_port }}
+      Подключение: ssh -i ~/.ssh/{{ ansible_host }}_{{ new_user }} -p {{ new_ssh_port }} {{ new_user }}@{{ ansible_host }}
+      Обновите inventory.ini с новыми параметрами!

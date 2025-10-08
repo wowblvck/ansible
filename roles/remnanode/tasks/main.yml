@@ -1,0 +1,126 @@
+- name: Create remnanode directory
+  file:
+    path: /opt/remnanode
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Generate random port for remnanode
+  set_fact:
+    remnanode_port: "{{ 10000 + (65535 - 10000) | random }}"
+
+- name: Display generated port
+  debug:
+    msg: "Сгенерированный порт для remnanode: {{ remnanode_port }}"
+
+- name: Create docker-compose.yml
+  copy:
+    dest: /opt/remnanode/docker-compose.yml
+    content: |
+      services:
+        remnanode:
+          container_name: remnanode
+          hostname: remnanode
+          image: remnawave/node:{{ remnanode_version }}
+          restart: always
+          network_mode: host
+          env_file:
+            - .env
+          volumes:
+            - './geoip_RU.dat:/usr/local/share/xray/geoip_RU.dat'
+            - './geosite_RU.dat:/usr/local/share/xray/geosite_RU.dat'
+            - '/var/log/remnanode:/var/log/remnanode'
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Request API key from user
+  pause:
+    prompt: "Введите API ключ для remnanode (или нажмите Enter для пропуска)"
+    echo: no
+  register: api_key_input
+
+- name: Download geoip_RU.dat file
+  get_url:
+    url: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat
+    dest: /opt/remnanode/geoip_RU.dat
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Download geosite_RU.dat file
+  get_url:
+    url: https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat
+    dest: /opt/remnanode/geosite_RU.dat
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Update .env file with user inputs
+  copy:
+    dest: /opt/remnanode/.env
+    content: |
+      APP_PORT={{ remnanode_port }}
+      {% if api_key_input.user_input is defined and api_key_input.user_input != "" %}
+      {{ api_key_input.user_input }}
+      {% endif %}
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Allow remnanode port through UFW
+  ufw:
+    rule: allow
+    port: "{{ remnanode_port }}"
+    proto: tcp
+
+- name: Update apt cache and install logrotate
+  apt:
+    name: logrotate
+    state: present
+    update_cache: yes
+
+- name: Create log directory for remnanode
+  file:
+    path: /var/log/remnanode
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Configure logrotate for remnanode
+  copy:
+    dest: /etc/logrotate.d/remnanode
+    content: |
+      /var/log/remnanode/*.log {
+          size 50M
+          rotate 5
+          compress
+          missingok
+          notifempty
+          copytruncate
+      }
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Test logrotate configuration
+  command: logrotate -vf /etc/logrotate.d/remnanode
+  register: logrotate_test
+  changed_when: false
+
+- name: Display logrotate test results
+  debug:
+    var: logrotate_test.stdout_lines
+
+- name: Start remnanode with Docker Compose
+  community.docker.docker_compose_v2:
+    project_src: /opt/remnanode
+    state: present
+    pull: always
+  register: remnanode_compose_result
+
+- name: Display Docker Compose startup results
+  debug:
+    var: remnanode_compose_result

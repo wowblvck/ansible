@@ -1,0 +1,12 @@
+---
+- name: System Update Playbook
+  hosts: all
+  become: yes
+  roles:
+    - system-update
+
+  post_tasks:
+    - name: Reboot if required
+      reboot:
+        reboot_timeout: 300
+      when: reboot_required.stat.exists | default(false)

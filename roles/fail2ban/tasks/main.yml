@@ -1,0 +1,92 @@
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install fail2ban and systemd python support
+  apt:
+    name:
+      - fail2ban
+      - python3-systemd
+    state: present
+
+- name: Start and enable fail2ban service
+  systemd:
+    name: fail2ban
+    state: started
+    enabled: yes
+
+- name: Create fail2ban jail.local configuration
+  copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      # Ban hosts for one hour:
+      bantime = 3600
+
+      # Override /etc/fail2ban/jail.d/00-firewalld.conf:
+      banaction = ufw
+
+      # A host is banned if it has generated "maxretry" during the last "findtime" seconds.
+      findtime = 600
+
+      # "maxretry" is the number of failures before a host get banned.
+      maxretry = 5
+
+      backend  = systemd
+
+      # Ignore local IPs
+      ignoreip = 127.0.0.1/8 ::1
+
+      # Email settings (optional)
+      # destemail = admin@example.com
+      # sender = fail2ban@example.com
+      # mta = sendmail
+
+      [sshd]
+      enabled = true
+      port = ssh
+      logpath = %(sshd_log)s
+      backend = %(sshd_backend)s
+      maxretry = 3
+      bantime = 1800
+
+      [nginx-http-auth]
+      enabled = false
+
+      [nginx-limit-req]
+      enabled = false
+
+      [apache-auth]
+      enabled = false
+
+      [apache-badbots]
+      enabled = false
+
+      [apache-noscript]
+      enabled = false
+
+      [apache-overflows]
+      enabled = false
+
+      [postfix]
+      enabled = false
+
+      [courierauth]
+      enabled = false
+
+      [sasl]
+      enabled = false
+
+      [dovecot]
+      enabled = false
+
+      [postfix-sasl]
+      enabled = false
+
+      [mysqld-auth]
+      enabled = false
+    mode: "0644"
+    owner: root
+    group: root
+  notify: restart fail2ban

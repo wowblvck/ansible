@@ -1,0 +1,167 @@
+- name: Create caddy directory structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  loop:
+    - /opt/remnanode/caddy
+    - /opt/remnanode/caddy/html
+    - /opt/remnanode/caddy/logs
+
+- name: Create caddy .env file
+  copy:
+    dest: /opt/remnanode/caddy/.env
+    content: |
+      SELF_STEAL_DOMAIN={{ self_steal_domain }}
+      SELF_STEAL_PORT={{ self_steal_port }}
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Create caddy docker-compose.yml
+  copy:
+    dest: /opt/remnanode/caddy/docker-compose.yml
+    content: |
+      services:
+        caddy:
+          image: caddy:latest
+          container_name: caddy-remnawave
+          restart: unless-stopped
+          volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile
+            - ./html:/var/www/html
+            - ./logs:/var/log/caddy
+            - caddy_data:/data
+            - caddy_config:/config
+          env_file:
+            - .env
+          network_mode: "host"
+
+      volumes:
+        caddy_data:
+        caddy_config:
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Create Caddyfile
+  copy:
+    dest: /opt/remnanode/caddy/Caddyfile
+    content: |
+      {
+          https_port {$SELF_STEAL_PORT}
+          default_bind 127.0.0.1
+          servers {
+              listener_wrappers {
+                  proxy_protocol {
+                      allow 127.0.0.1/32
+                  }
+                  tls
+              }
+          }
+          auto_https disable_redirects
+      }
+
+      http://{$SELF_STEAL_DOMAIN} {
+          bind 0.0.0.0
+          redir https://{$SELF_STEAL_DOMAIN}{uri} permanent
+      }
+
+      https://{$SELF_STEAL_DOMAIN} {
+          root * /var/www/html
+          try_files {path} /index.html
+          file_server
+      }
+
+      :{$SELF_STEAL_PORT} {
+          tls internal
+          respond 204
+      }
+
+      :80 {
+          bind 0.0.0.0
+          respond 204
+      }
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Create HTML index file
+  copy:
+    dest: /opt/remnanode/caddy/html/index.html
+    content: |
+      <!DOCTYPE html>
+      <html lang="ru">
+      <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>SelfSteal — Сайт временно недоступен</title>
+          <style>
+              body {
+                  background-color: #121212;
+                  color: #ffffff;
+                  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                  display: flex;
+                  flex-direction: column;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  margin: 0;
+                  text-align: center;
+                  padding: 20px;
+              }
+              h1 {
+                  font-size: 3rem;
+                  margin-bottom: 0.5rem;
+                  color: #ff4c4c;
+              }
+              p {
+                  font-size: 1.25rem;
+                  margin-bottom: 2rem;
+                  max-width: 400px;
+                  line-height: 1.5;
+              }
+              .spinner {
+                  border: 6px solid #333;
+                  border-top: 6px solid #ff4c4c;
+                  border-radius: 50%;
+                  width: 60px;
+                  height: 60px;
+                  animation: spin 1.2s linear infinite;
+                  margin-bottom: 20px;
+              }
+              @keyframes spin {
+                  0% { transform: rotate(0deg); }
+                  100% { transform: rotate(360deg); }
+              }
+              footer {
+                  position: absolute;
+                  bottom: 10px;
+                  font-size: 0.85rem;
+                  color: #777;
+              }
+          </style>
+      </head>
+      <body>
+          <div class="spinner"></div>
+          <h1>SelfSteal</h1>
+          <p>Сайт временно недоступен. Мы работаем над улучшениями и скоро вернемся!</p>
+          <footer>© 2025 SelfSteal</footer>
+      </body>
+      </html>
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Start remnanode with Docker Compose
+  community.docker.docker_compose_v2:
+    project_src: /opt/remnanode/caddy
+    state: present
+    pull: always
+  register: caddy_compose_result
+
+- name: Display Docker Compose startup results
+  debug:
+    var: caddy_compose_result
